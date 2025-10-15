@@ -2,33 +2,37 @@ import streamlit as st
 import pickle
 import pandas as pd
 import numpy as np
+import os # Import os for better file handling checks
 
 # Define the model file name
 MODEL_FILE = 'EV_full_pipeline_SP.pkl'
 
-# ------------------- LOAD MODEL SAFELY -------------------
-@st.cache_resource
-def load_model(file_name):
-    """Loads the pickled model with caching."""
-    try:
-        with open(file_name, 'rb') as f:
-            return pickle.load(f)
-    except FileNotFoundError:
-        st.error(f"❌ Model file '{file_name}' not found. Please ensure it’s in the app directory.")
-        st.stop()
-    except Exception as e:
-        st.error(f"⚠️ Error loading model. The pipeline structure might be incompatible: {e}")
-        st.stop()
-
-model = load_model(MODEL_FILE)
-
-# ------------------- PAGE CONFIGURATION AND STYLING -------------------
+# ------------------- 1. PAGE CONFIGURATION (MUST BE FIRST STREAMLIT COMMAND) -------------------
 st.set_page_config(
     page_title="EV Price Predictor",
     page_icon="⚡",
     layout="wide"
 )
 
+# ------------------- 2. LOAD MODEL SAFELY -------------------
+@st.cache_resource
+def load_model(file_name):
+    """Loads the pickled model with caching."""
+    if not os.path.exists(file_name):
+        st.error(f"❌ Model file '{file_name}' not found. Please ensure it’s in the app directory.")
+        st.stop()
+        
+    try:
+        with open(file_name, 'rb') as f:
+            return pickle.load(f)
+    except Exception as e:
+        st.error(f"⚠️ Error loading model. The pipeline structure might be incompatible: {e}")
+        st.stop()
+
+# Load the model outside the prediction button to prevent reloading on every interaction
+model = load_model(MODEL_FILE)
+
+# ------------------- 3. APP STYLING AND HEADER -------------------
 st.markdown(
     """
     <style>
@@ -67,12 +71,12 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ------------------- APP HEADER -------------------
 st.markdown("<h1 class='title'>⚡ Electric Vehicle (EV) Price Predictor</h1>", unsafe_allow_html=True)
 st.markdown("Predict the market price (€) of an Electric Vehicle based on its technical specifications and features.", unsafe_allow_html=True)
 st.divider()
 
-# ------------------- INFERRED FEATURE LISTS -------------------
+# ------------------- 4. INFERRED FEATURE LISTS -------------------
+# (These lists are taken directly from your code)
 BRAND_OPTIONS = [
     'Aiways', 'Audi', 'BMW', 'Byton', 'CUPRA', 'Citroen', 'Ford', 'Honda', 'Hyundai', 'Kia', 
     'Lexus', 'Lightyear', 'MG', 'Mazda', 'Mercedes', 'Mini', 'Nissan', 'Opel', 'Peugeot', 
@@ -85,7 +89,7 @@ PLUG_TYPE_OPTIONS = ['Type 1 CHAdeMO', 'Type 2', 'Type 2 CCS', 'Type 2 CHAdeMO']
 BODY_STYLE_OPTIONS = ['Cabrio', 'Hatchback', 'Liftback', 'MPV', 'Pickup', 'SPV', 'SUV', 'Sedan', 'Station']
 SEGMENT_OPTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'N', 'S']
 
-# ------------------- USER INPUT SECTION -------------------
+# ------------------- 5. USER INPUT SECTION -------------------
 st.header("⚙️ Enter Vehicle Specifications")
 
 # Group 1: Core Performance and Efficiency
@@ -136,9 +140,9 @@ with col6:
 
 st.divider()
 
-# ------------------- PREDICTION SECTION -------------------
+# ------------------- 6. PREDICTION LOGIC (FIXED) -------------------
 if st.button("💰 Predict EV Price", use_container_width=True):
-    # Assemble input data
+    # Data is collected into a dictionary
     input_data = {
         'AccelSec': [accel_sec],
         'Range_Km': [range_km],
@@ -152,7 +156,7 @@ if st.button("💰 Predict EV Price", use_container_width=True):
         'Segment': [segment]
     }
     
-    # Create DataFrame and ensure correct column order
+    # Create DataFrame and ensure correct column order (CRUCIAL)
     input_df = pd.DataFrame(input_data)
     COLUMNS_ORDER = [
         'AccelSec', 'Range_Km', 'Efficiency_WhKm', 'FastCharge_KmH', 
@@ -166,11 +170,11 @@ if st.button("💰 Predict EV Price", use_container_width=True):
             # 1. Predict the price (Output is log(1+Price))
             log1p_price = model.predict(input_df)[0]
             
-            # 2. <<< CRITICAL STEP: INVERSE TRANSFORMATION >>>
-            # Invert np.log1p() using np.expm1() to get the actual price in Euros
+            # 2. CRITICAL STEP: INVERSE TRANSFORMATION (np.expm1)
+            # This reverts the np.log1p() applied to your target variable (y).
             predicted_price_actual = np.expm1(log1p_price)
             
-            # Ensure price is not negative (possible with Linear Regression)
+            # Handle potential negative prices from Linear Regression
             if predicted_price_actual < 0:
                 predicted_price_actual = 0
                 
@@ -180,7 +184,7 @@ if st.button("💰 Predict EV Price", use_container_width=True):
             # Formatting the price
             formatted_price = f"{predicted_price_rounded:,.0f} €"
 
-            # Determine price tier for visual feedback
+            # 4. Determine price tier for visual feedback
             if predicted_price_rounded >= 100000:
                 color = "#008000"  # Green - Premium
                 message = "Premium Segment EV"
@@ -194,7 +198,7 @@ if st.button("💰 Predict EV Price", use_container_width=True):
                 message = "Budget-Friendly EV"
                 icon = "💸"
 
-            # Display the result in a striking block
+            # 5. Display the result in a striking block
             st.markdown(
                 f"<div style='border: 3px solid {color}; padding: 25px; border-radius: 15px; background-color: #ffffff; text-align: center; margin-top: 20px;'>", 
                 unsafe_allow_html=True
@@ -212,8 +216,8 @@ if st.button("💰 Predict EV Price", use_container_width=True):
                 st.dataframe(input_df, hide_index=True)
 
         except Exception as e:
-            st.error(f"⚠️ An error occurred during prediction. Please check your inputs: {e}")
+            st.error(f"⚠️ An error occurred during prediction. Please check your inputs or the model pipeline: {e}")
 
-# ------------------- FOOTER -------------------
+# ------------------- 7. FOOTER -------------------
 st.divider()
 st.caption("🔹 EV Price Predictor | Model v1.0 | Note: The model was trained on a Linear Regression pipeline with Robust Scaling for outlier handling.")
