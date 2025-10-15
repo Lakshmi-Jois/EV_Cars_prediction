@@ -7,15 +7,20 @@ import numpy as np
 MODEL_FILE = 'EV_full_pipeline_SP.pkl'
 
 # ------------------- LOAD MODEL SAFELY -------------------
-try:
-    with open(MODEL_FILE, 'rb') as f:
-        model = pickle.load(f)
-except FileNotFoundError:
-    st.error(f"❌ Model file '{MODEL_FILE}' not found. Please ensure it’s in the app directory.")
-    st.stop()
-except Exception as e:
-    st.error(f"⚠️ Error loading model. The pipeline structure might be incompatible: {e}")
-    st.stop()
+@st.cache_resource
+def load_model(file_name):
+    """Loads the pickled model with caching."""
+    try:
+        with open(file_name, 'rb') as f:
+            return pickle.load(f)
+    except FileNotFoundError:
+        st.error(f"❌ Model file '{file_name}' not found. Please ensure it’s in the app directory.")
+        st.stop()
+    except Exception as e:
+        st.error(f"⚠️ Error loading model. The pipeline structure might be incompatible: {e}")
+        st.stop()
+
+model = load_model(MODEL_FILE)
 
 # ------------------- PAGE CONFIGURATION AND STYLING -------------------
 st.set_page_config(
@@ -68,7 +73,6 @@ st.markdown("Predict the market price (€) of an Electric Vehicle based on its 
 st.divider()
 
 # ------------------- INFERRED FEATURE LISTS -------------------
-# These lists are inferred directly from the content of the uploaded full_pipeline_SP.pkl
 BRAND_OPTIONS = [
     'Aiways', 'Audi', 'BMW', 'Byton', 'CUPRA', 'Citroen', 'Ford', 'Honda', 'Hyundai', 'Kia', 
     'Lexus', 'Lightyear', 'MG', 'Mazda', 'Mercedes', 'Mini', 'Nissan', 'Opel', 'Peugeot', 
@@ -134,18 +138,7 @@ st.divider()
 
 # ------------------- PREDICTION SECTION -------------------
 if st.button("💰 Predict EV Price", use_container_width=True):
-    # The pipeline expects features in the order they were trained:
-    # 1. AccelSec (Num)
-    # 2. Range_Km (Num)
-    # 3. Efficiency_WhKm (Num)
-    # 4. FastCharge_KmH (Num)
-    # 5. Brand (Cat)
-    # 6. RapidCharge (Cat)
-    # 7. PowerTrain (Cat)
-    # 8. PlugType (Cat)
-    # 9. BodyStyle (Cat)
-    # 10. Segment (Cat)
-    
+    # Assemble input data
     input_data = {
         'AccelSec': [accel_sec],
         'Range_Km': [range_km],
@@ -159,10 +152,8 @@ if st.button("💰 Predict EV Price", use_container_width=True):
         'Segment': [segment]
     }
     
-    # Create DataFrame in the exact order the model expects
+    # Create DataFrame and ensure correct column order
     input_df = pd.DataFrame(input_data)
-    
-    # Ensure correct column order for the pipeline (crucial step)
     COLUMNS_ORDER = [
         'AccelSec', 'Range_Km', 'Efficiency_WhKm', 'FastCharge_KmH', 
         'Brand', 'RapidCharge', 'PowerTrain', 'PlugType', 
@@ -172,10 +163,19 @@ if st.button("💰 Predict EV Price", use_container_width=True):
 
     with st.spinner("Calculating the EV market price... ⏳"):
         try:
-            # Predict the price
-            predicted_price = model.predict(input_df)[0]
-            # Round to the nearest 100 Euros for a cleaner display
-            predicted_price_rounded = np.round(predicted_price / 100) * 100
+            # 1. Predict the price (Output is log(1+Price))
+            log1p_price = model.predict(input_df)[0]
+            
+            # 2. <<< CRITICAL STEP: INVERSE TRANSFORMATION >>>
+            # Invert np.log1p() using np.expm1() to get the actual price in Euros
+            predicted_price_actual = np.expm1(log1p_price)
+            
+            # Ensure price is not negative (possible with Linear Regression)
+            if predicted_price_actual < 0:
+                predicted_price_actual = 0
+                
+            # 3. Round to the nearest 100 Euros for a clean display
+            predicted_price_rounded = np.round(predicted_price_actual / 100) * 100
             
             # Formatting the price
             formatted_price = f"{predicted_price_rounded:,.0f} €"
